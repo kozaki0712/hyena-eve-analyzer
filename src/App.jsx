@@ -107,13 +107,43 @@ const hallData = selectedHall ? (allData[selectedHall.slug] || []) : [];
   const fetchData = async (hall) => {
     setLoading(true); setAiComment("");
     try {
-      const res = await fetch(`http://localhost:3001/api/scrape?slug=${encodeURIComponent(hall.slug)}`);
+      // 取得済みデータと日付一覧を準備
+      const existing = allData[hall.slug] || [];
+      const existingDates = [...new Set(existing.map(r => r.date))];
+
+      const res = await fetch("http://localhost:3001/api/scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug: hall.slug, existingDates }),
+      });
       if (!res.ok) throw new Error(`API error: ${res.status}`);
-      const data = await res.json();
-      const updated = { ...allData, [hall.slug]: data };
+      const { newRecords, stoppedEarly, reason } = await res.json();
+
+      if (reason === "up_to_date") {
+        alert("✅ 新しいデータはありませんでした（すべて取得済みです）。");
+        setSelectedHall(hall);
+        return;
+      }
+
+      // 日付単位でマージ（新データで上書き、既存は保持）
+      const newDates = new Set(newRecords.map(r => r.date));
+      const merged = [
+        ...existing.filter(r => !newDates.has(r.date)),
+        ...newRecords,
+      ];
+
+      const updated = { ...allData, [hall.slug]: merged };
       setAllData(updated);
       localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(updated));
       setSelectedHall(hall);
+
+      if (stoppedEarly) {
+        alert(
+          `⚠ 連続して0件が続いたため途中で停止しました（Cloudflareブロックの可能性）。\n` +
+          `今回取得: ${newRecords.length}件 → 合計: ${merged.length}件\n` +
+          `続きは次回「データ取得」を押すと再開できます。`
+        );
+      }
     } catch (err) {
       alert(`データ取得エラー: ${err.message}`);
     } finally { setLoading(false); }
@@ -197,7 +227,7 @@ const hallData = selectedHall ? (allData[selectedHall.slug] || []) : [];
               {selectedHall && (
                 <div style={{ ...S.row, marginTop: 14 }}>
                   <button style={S.btn("primary")} onClick={() => fetchData(selectedHall)} disabled={loading}>{loading ? "取得中…" : "▶ データ取得"}</button>
-                  <span style={{ fontSize: 11, color: "#475569" }}>{hallData.length > 0 ? `${hallData.length}件読込済 | イベ日: ${stats?.eveDayRecords?.length || 0}件` : "未取得"}</span>
+                  <span style={{ fontSize: 11, color: "#475569" }}>{hallData.length > 0 ? `${[...new Set(hallData.map(r=>r.date))].length}日分・${hallData.length}件 | イベ日: ${stats?.eveDayRecords?.length || 0}件` : "未取得"}</span>
                 </div>
               )}
             </div>

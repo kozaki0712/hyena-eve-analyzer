@@ -76,14 +76,19 @@ async function setupPage(page, referer = null) {
   await page.setExtraHTTPHeaders(headers);
 }
 
+/** 指定ミリ秒待機 */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 /**
- * メインスクレイピング関数
- * @param {string} slug  ana-slo.com/<slug>/ のパス部分
- * @param {number} maxDays  取得する最大日数（デフォルト30）
+ * メインスクレイピング関数（差分更新対応）
+ *
+ * @param {string} slug          ana-slo.com/<slug>/ のパス部分
+ * @param {Set<string>} existingDates  取得済み日付の Set（YYYY-MM-DD）。この日付はスキップ。
+ * @returns {{ newRecords: object[], stoppedEarly: boolean, reason: string }}
  */
-async function scrapeAnaSlo(slug, maxDays = 30) {
+async function scrapeAnaSlo(slug, existingDates = new Set()) {
   const listingUrl = `https://ana-slo.com/${slug}/`;
-  console.log(`[scrape] Listing: ${listingUrl}  maxDays=${maxDays}`);
+  console.log(`[scrape] Listing: ${listingUrl}  existingDates=${existingDates.size}`);
 
   const browser = await getBrowser();
   const page = await browser.newPage();
@@ -112,16 +117,32 @@ async function scrapeAnaSlo(slug, maxDays = 30) {
         .filter((d) => d && d.hasData);
     });
 
-    console.log(`[scrape] Days with data: ${dayLinks.length} → scraping ${Math.min(dayLinks.length, maxDays)} days`);
-    if (dayLinks.length === 0) {
-      console.warn("[scrape] No day links found. Check slug.");
-      return [];
+    // ── Step 2b: 取得済み日付をスキップ ──
+    const newDayLinks = dayLinks.filter((d) => {
+      const m = d.href.match(/(\d{4}-\d{2}-\d{2})/);
+      return m && !existingDates.has(m[1]);
+    });
+
+    console.log(
+      `[scrape] Days with data: ${dayLinks.length} | already fetched: ${existingDates.size} | new: ${newDayLinks.length}`
+    );
+
+    if (newDayLinks.length === 0) {
+      console.log("[scrape] No new days to scrape.");
+      return { newRecords: [], stoppedEarly: false, reason: "up_to_date" };
     }
 
-    // ── Step 3: 各日付ページを巡回 ──
-    const allRecords = [];
-    for (const day of dayLinks.slice(0, maxDays)) {
-      // 日付をURLから取得 (例: 2026-06-14)
+    // ── Step 3: 各日付ページを巡回（差分のみ）──
+    const newRecords = [];
+    let consecutiveZero = 0;
+    const CONSECUTIVE_ZERO_LIMIT = 3; // 連続0件でCFブロックとみなし中断
+
+    for (let i = 0; i < newDayLinks.length; i++) {
+      const day = newDayLinks[i];
+
+      // 2回目以降は 1〜2 秒待機
+      if (i > 0) await sleep(1000 + Math.random() * 1000);
+
       const dateMatch = day.href.match(/(\d{4}-\d{2}-\d{2})/);
       if (!dateMatch) continue;
       const date = dateMatch[1];
@@ -135,33 +156,22 @@ async function scrapeAnaSlo(slug, maxDays = 30) {
       // 台別データをパース
       const records = await page.evaluate(
         (date, dayOfMonth) => {
-          // #all_data_table tbody tr → theadのヘッダー行は自動的に含まれない
           const rows = Array.from(document.querySelectorAll("#all_data_table tbody tr"));
           if (rows.length === 0) return [];
-
           return rows
             .map((row) => {
-              // 確認済みセレクタで各フィールドを取得
               const machineName = row.querySelector("td.fixed01")?.textContent?.trim();
               const machineId   = row.querySelector("td.table_cells:nth-child(2)")?.textContent?.trim();
               const gamesRaw    = row.querySelector("td.table_cells:nth-child(3)")?.textContent?.trim();
               const diffRaw     = row.querySelector("td.table_cells:nth-child(4)")?.textContent?.trim();
               const bbRaw       = row.querySelector("td.table_cells:nth-child(5)")?.textContent?.trim();
               const rbRaw       = row.querySelector("td.table_cells:nth-child(6)")?.textContent?.trim();
-
               if (!machineName || !machineId) return null;
-
-              // G数: カンマ除去して整数化
               const games = parseInt(gamesRaw?.replace(/[,，]/g, ""), 10) || 0;
-
-              // 差枚: + とカンマを除去（マイナス記号はそのまま残す）
-              const diff = parseInt(diffRaw?.replace(/[+,，]/g, ""), 10);
+              const diff  = parseInt(diffRaw?.replace(/[+,，]/g, ""), 10);
               if (isNaN(diff)) return null;
-
-              const bb = parseInt(bbRaw, 10) || 0;
-              const rb = parseInt(rbRaw, 10) || 0;
-
-              return { date, dayOfMonth, machineId, machineName, diff, games, bb, rb };
+              return { date, dayOfMonth, machineId, machineName, diff, games,
+                       bb: parseInt(bbRaw, 10) || 0, rb: parseInt(rbRaw, 10) || 0 };
             })
             .filter(Boolean);
         },
@@ -170,11 +180,22 @@ async function scrapeAnaSlo(slug, maxDays = 30) {
       );
 
       console.log(`[scrape]   ${date}  ${records.length} records`);
-      allRecords.push(...records);
+
+      if (records.length === 0) {
+        consecutiveZero++;
+        console.warn(`[scrape]   → 0件連続 ${consecutiveZero}/${CONSECUTIVE_ZERO_LIMIT}`);
+        if (consecutiveZero >= CONSECUTIVE_ZERO_LIMIT) {
+          console.warn("[scrape] CF ブロックの可能性あり。ここで中断します。");
+          return { newRecords, stoppedEarly: true, reason: "consecutive_zero" };
+        }
+      } else {
+        consecutiveZero = 0;
+        newRecords.push(...records);
+      }
     }
 
-    console.log(`[scrape] Done. Total: ${allRecords.length} records`);
-    return allRecords;
+    console.log(`[scrape] Done. New records: ${newRecords.length}`);
+    return { newRecords, stoppedEarly: false, reason: "completed" };
   } finally {
     await page.close();
   }
@@ -183,20 +204,23 @@ async function scrapeAnaSlo(slug, maxDays = 30) {
 // ── API エンドポイント ──────────────────────────────────────────
 
 /**
- * GET /api/scrape?slug=<slug>[&days=<n>]
+ * POST /api/scrape
+ * body: { slug: string, existingDates?: string[] }
  *
  * slug: ana-slo.com/<slug>/ の URL パス（日本語可）
- * days: 取得日数 (1–180, デフォルト30)
+ * existingDates: 取得済み日付の配列（YYYY-MM-DD）。この日付はスキップされる。
+ *
+ * response: { newRecords: object[], stoppedEarly: boolean, reason: string }
  */
-app.get("/api/scrape", async (req, res) => {
-  const { slug, days } = req.query;
-  if (!slug) return res.status(400).json({ error: "slug パラメータが必要です" });
+app.post("/api/scrape", async (req, res) => {
+  const { slug, existingDates = [] } = req.body;
+  if (!slug) return res.status(400).json({ error: "slug が必要です" });
 
-  const maxDays = Math.min(Math.max(parseInt(days, 10) || 365, 1), 365);
+  const existingDateSet = new Set(existingDates);
 
   try {
-    const data = await scrapeAnaSlo(slug, maxDays);
-    res.json(data);
+    const result = await scrapeAnaSlo(slug, existingDateSet);
+    res.json(result);
   } catch (err) {
     console.error("[error]", err.message);
     res.status(500).json({ error: err.message });
@@ -247,6 +271,6 @@ app.get("/api/health", (_req, res) => res.json({ status: "ok", port: PORT }));
 
 app.listen(PORT, () => {
   console.log(`✅  EVE ANALYZER server  →  http://localhost:${PORT}`);
-  console.log(`   GET /api/scrape?slug=<path>[&days=365]`);
-  console.log(`   例: /api/scrape?slug=%E3%83%9B%E3%83%BC%E3%83%AB%E3%83%87%E3%83%BC%E3%82%BF%2F%E6%9D%B1%E4%BA%AC%E9%83%BD%2F%E6%A5%BD%E5%9C%92%E3%82%A2%E3%83%A1%E6%A8%AA%E5%BA%97-%E3%83%87%E3%83%BC%E3%82%BF%E4%B8%80%E8%A6%A7`);
+  console.log(`   POST /api/scrape  body: { slug, existingDates?: string[] }`);
+  console.log(`   GET  /api/debug-dates?slug=<path>`);
 });
