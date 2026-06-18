@@ -45,6 +45,7 @@ jobs:
           git add data/halls/
           git diff --staged --quiet \
             || git commit -m "chore: update hall data $(date +'%Y-%m-%d') [skip ci]"
+          git pull --rebase origin main
           git push
 
   # ── Job 2: Viteビルドして GitHub Pages にデプロイ ────────────
