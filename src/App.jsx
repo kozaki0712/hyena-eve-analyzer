@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 
 const HIGH_DIFF_THRESHOLD = 1500;
 const STORAGE_KEY_HALLS = "eve_halls";
@@ -10,9 +10,6 @@ function parseEventDayStr(str) {
   return str.split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n >= 1 && n <= 31);
 }
 
-/** dev=ローカルAPI / prod=静的JSON の切り替え */
-const IS_DEV = import.meta.env.DEV;
-const BASE   = import.meta.env.BASE_URL;
 
 function calcStats(records, eventDays) {
   const eveDayRecords = records.filter((r) => eventDays.includes(r.dayOfMonth));
@@ -83,58 +80,36 @@ export default function App() {
   const [aiLoading, setAiLoading] = useState(false);
   const [newHallName, setNewHallName] = useState("");
   const [newHallSlug, setNewHallSlug] = useState("");
-  const [newHallKey, setNewHallKey] = useState("");
   const [newHallEventDayInput, setNewHallEventDayInput] = useState("1,11,21,31");
   const [eventDayInput, setEventDayInput] = useState(eventDays.join(","));
   const [viewMode, setViewMode] = useState("seat");
 
-  // prod（GitHub Pages）では halls-config.json から店舗一覧を自動ロード
-  useEffect(() => {
-    if (!IS_DEV) {
-      fetch(`${BASE}data/halls-config.json`)
-        .then(r => r.json())
-        .then(config => setHalls(config))
-        .catch(err => console.error("[halls-config] load failed:", err));
-    }
-  }, []);
-
-  const hallData = selectedHall ? (allData[selectedHall.slug] || []) : [];
+const hallData = selectedHall ? (allData[selectedHall.slug] || []) : [];
   // 店舗固有のeventDaysがあればそちら、なければグローバル設定にフォールバック
   const activeEventDays = selectedHall?.eventDays ?? eventDays;
   const stats = hallData.length > 0 ? calcStats(hallData, activeEventDays) : null;
 
   const addHall = () => {
-    if (!newHallName || !newHallSlug || !newHallKey) return;
+    if (!newHallName || !newHallSlug) return;
     const hallEventDays = parseEventDayStr(newHallEventDayInput);
     const hall = {
       name: newHallName,
       slug: newHallSlug,
-      key: newHallKey.trim(),
       eventDays: hallEventDays.length > 0 ? hallEventDays : null,
       addedAt: new Date().toISOString(),
     };
     const updated = [...halls, hall];
     setHalls(updated);
     localStorage.setItem(STORAGE_KEY_HALLS, JSON.stringify(updated));
-    setNewHallName(""); setNewHallSlug(""); setNewHallKey(""); setNewHallEventDayInput("1,11,21,31");
+    setNewHallName(""); setNewHallSlug(""); setNewHallEventDayInput("1,11,21,31");
   };
 
   const fetchData = async (hall) => {
     setLoading(true); setAiComment("");
     try {
-      let data;
-      if (IS_DEV) {
-        // 開発環境: ローカルExpressサーバーからスクレイピング
-        const res = await fetch(`http://localhost:3001/api/scrape?slug=${encodeURIComponent(hall.slug)}`);
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        data = await res.json();
-      } else {
-        // 本番（GitHub Pages）: リポジトリの静的JSONを取得
-        if (!hall.key) throw new Error("この店舗にはkeyが設定されていません");
-        const res = await fetch(`${BASE}data/halls/${hall.key}.json`);
-        if (!res.ok) throw new Error(`データファイルが見つかりません: ${hall.key}.json`);
-        data = await res.json();
-      }
+      const res = await fetch(`http://localhost:3001/api/scrape?slug=${encodeURIComponent(hall.slug)}`);
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      const data = await res.json();
       const updated = { ...allData, [hall.slug]: data };
       setAllData(updated);
       localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(updated));
@@ -312,25 +287,15 @@ export default function App() {
         {tab === "halls" && (
           <div style={S.section}>
             <div style={S.h2}>店舗登録</div>
-            {!IS_DEV && (
-              <div style={{ fontSize: 12, color: "#64748b", background: "#0d1117", border: "1px solid #1e293b", borderRadius: 4, padding: "8px 12px", marginBottom: 14 }}>
-                📋 GitHub Pages モードです。店舗の追加・削除は{" "}
-                <code style={{ color: "#7eefc7" }}>data/halls-config.json</code>{" "}
-                を直接編集してください。
-              </div>
-            )}
-            {IS_DEV && (
             <div style={{ ...S.row, marginBottom: 20, alignItems: "flex-end", flexWrap: "wrap" }}>
-              <div><div style={S.label}>店舗名</div><input style={{ ...S.input, width: 160 }} value={newHallName} onChange={e => setNewHallName(e.target.value)} placeholder="例: マルハン渋谷" /></div>
-              <div><div style={S.label}>ファイルキー <span style={{ textTransform: "none", letterSpacing: 0 }}>（英数-）</span></div><input style={{ ...S.input, width: 150 }} value={newHallKey} onChange={e => setNewHallKey(e.target.value)} placeholder="例: maruhan-shibuya" /></div>
-              <div><div style={S.label}>アナスロURL slug</div><div style={{ ...S.row, gap: 4 }}><span style={{ color: "#475569", fontSize: 12 }}>ana-slo.com/</span><input style={{ ...S.input, width: 200 }} value={newHallSlug} onChange={e => setNewHallSlug(e.target.value)} placeholder="例: ホールデータ/東京都/..." /></div></div>
+              <div><div style={S.label}>店舗名</div><input style={{ ...S.input, width: 180 }} value={newHallName} onChange={e => setNewHallName(e.target.value)} placeholder="例: マルハン渋谷" /></div>
+              <div><div style={S.label}>アナスロURL slug</div><div style={{ ...S.row, gap: 4 }}><span style={{ color: "#475569", fontSize: 12 }}>ana-slo.com/</span><input style={{ ...S.input, width: 220 }} value={newHallSlug} onChange={e => setNewHallSlug(e.target.value)} placeholder="例: ホールデータ/東京都/..." /></div></div>
               <div>
-                <div style={S.label}>イベント日 <span style={{ color: "#334155", textTransform: "none", letterSpacing: 0 }}>（空欄=グローバル）</span></div>
-                <input style={{ ...S.input, width: 130 }} value={newHallEventDayInput} onChange={e => setNewHallEventDayInput(e.target.value)} placeholder="例: 1,11,21,31" />
+                <div style={S.label}>イベント日 <span style={{ color: "#334155", textTransform: "none", letterSpacing: 0 }}>（空欄=グローバル設定）</span></div>
+                <input style={{ ...S.input, width: 140 }} value={newHallEventDayInput} onChange={e => setNewHallEventDayInput(e.target.value)} placeholder="例: 1,11,21,31" />
               </div>
-              <button style={S.btn("primary")} onClick={addHall} disabled={!newHallName || !newHallSlug || !newHallKey}>追加</button>
+              <button style={S.btn("primary")} onClick={addHall} disabled={!newHallName || !newHallSlug}>追加</button>
             </div>
-            )}
             <div style={S.h2}>登録済み店舗</div>
             {halls.length === 0 ? <p style={{ color: "#475569", fontSize: 13 }}>まだ登録されていません。</p> : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

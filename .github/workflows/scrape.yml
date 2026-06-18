@@ -1,9 +1,8 @@
 name: Daily Scrape & Deploy
+# 無効化中（ローカル開発モードに戻したため）
 
 on:
-  schedule:
-    - cron: '0 17 * * *'   # 毎日 2:00 JST (= 17:00 UTC)
-  workflow_dispatch:         # 手動実行も可能
+  workflow_dispatch:   # 手動実行のみ（自動スケジュールは停止）
 
 permissions:
   contents: write
