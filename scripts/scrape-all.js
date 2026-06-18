@@ -1,7 +1,7 @@
 /**
  * scripts/scrape-all.js
- * data/halls-config.json に記載されたホールを全てスクレイピングし、
- * data/halls/{key}.json として保存する。
+ * public/data/halls-config.json に記載されたホールを全てスクレイピングし、
+ * public/data/halls/{key}.json として保存する。
  * GitHub Actions から呼ばれる。
  */
 
@@ -12,8 +12,8 @@ const path = require("path");
 
 puppeteer.use(StealthPlugin());
 
-const CONFIG_PATH = path.join(__dirname, "../data/halls-config.json");
-const OUTPUT_DIR  = path.join(__dirname, "../data/halls");
+const CONFIG_PATH = path.join(__dirname, "../public/data/halls-config.json");
+const OUTPUT_DIR  = path.join(__dirname, "../public/data/halls");
 const MAX_DAYS    = 365;
 
 // ── Cloudflareチャレンジ通過待機 ───────────────────────────────
