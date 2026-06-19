@@ -82,11 +82,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /**
  * メインスクレイピング関数（差分更新対応）
  *
- * @param {string} slug          ana-slo.com/<slug>/ のパス部分
- * @param {Set<string>} existingDates  取得済み日付の Set（YYYY-MM-DD）。この日付はスキップ。
+ * @param {string}      slug          ana-slo.com/<slug>/ のパス部分
+ * @param {Set<string>} existingDates 取得済み日付の Set（YYYY-MM-DD）。この日付はスキップ。
+ * @param {number}      maxNewDays    1回の実行で取得する最大新規日数（デフォルト 365）
  * @returns {{ newRecords: object[], stoppedEarly: boolean, reason: string }}
  */
-async function scrapeAnaSlo(slug, existingDates = new Set()) {
+async function scrapeAnaSlo(slug, existingDates = new Set(), maxNewDays = 365) {
   const listingUrl = `https://ana-slo.com/${slug}/`;
   console.log(`[scrape] Listing: ${listingUrl}  existingDates=${existingDates.size}`);
 
@@ -148,13 +149,15 @@ async function scrapeAnaSlo(slug, existingDates = new Set()) {
       return { newRecords: [], stoppedEarly: false, reason: "up_to_date" };
     }
 
-    // ── Step 3: 各日付ページを巡回（差分のみ）──
+    // ── Step 3: 各日付ページを巡回（差分のみ、最大 maxNewDays 件）──
+    const targets = newDayLinks.slice(0, maxNewDays);
+    console.log(`[scrape] Scraping ${targets.length} new days (limit=${maxNewDays})`);
     const newRecords = [];
     let consecutiveZero = 0;
     const CONSECUTIVE_ZERO_LIMIT = 3; // 連続0件でCFブロックとみなし中断
 
-    for (let i = 0; i < newDayLinks.length; i++) {
-      const day = newDayLinks[i];
+    for (let i = 0; i < targets.length; i++) {
+      const day = targets[i];
 
       // 2回目以降は 1〜2 秒待機
       if (i > 0) await sleep(1000 + Math.random() * 1000);
@@ -229,13 +232,14 @@ async function scrapeAnaSlo(slug, existingDates = new Set()) {
  * response: { newRecords: object[], stoppedEarly: boolean, reason: string }
  */
 app.post("/api/scrape", async (req, res) => {
-  const { slug, existingDates = [] } = req.body;
+  const { slug, existingDates = [], maxNewDays = 365 } = req.body;
   if (!slug) return res.status(400).json({ error: "slug が必要です" });
 
   const existingDateSet = new Set(existingDates);
+  const limit = Math.min(Math.max(parseInt(maxNewDays, 10) || 365, 1), 365);
 
   try {
-    const result = await scrapeAnaSlo(slug, existingDateSet);
+    const result = await scrapeAnaSlo(slug, existingDateSet, limit);
     res.json(result);
   } catch (err) {
     console.error("[error]", err.message);
