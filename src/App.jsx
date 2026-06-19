@@ -84,7 +84,7 @@ export default function App() {
   const [eventDayInput, setEventDayInput] = useState(eventDays.join(","));
   const [viewMode, setViewMode] = useState("seat");
 
-const hallData = selectedHall ? (allData[selectedHall.slug] || []) : [];
+  const hallData = selectedHall ? (allData[selectedHall.slug] || []) : [];
   // 店舗固有のeventDaysがあればそちら、なければグローバル設定にフォールバック
   const activeEventDays = selectedHall?.eventDays ?? eventDays;
   const stats = hallData.length > 0 ? calcStats(hallData, activeEventDays) : null;
