@@ -119,8 +119,16 @@ export default function App() {
       if (!res.ok) throw new Error(`API error: ${res.status}`);
       const { newRecords, stoppedEarly, reason } = await res.json();
 
-      if (reason === "up_to_date") {
-        alert("✅ 新しいデータはありませんでした（すべて取得済みです）。");
+      if (reason === "cf_blocked") {
+        alert("⛔ Cloudflare にブロックされました。\n数分待ってから再度「データ取得」を押してください。");
+        setSelectedHall(hall);
+        return;
+      }
+      if (reason === "no_data_on_listing" || reason === "up_to_date") {
+        const msg = reason === "up_to_date"
+          ? `✅ 新しいデータはありませんでした（すべて取得済み）。\n現在: ${(allData[hall.slug]||[]).length}件`
+          : "⚠ 一覧ページからデータを取得できませんでした。slug を確認してください。";
+        alert(msg);
         setSelectedHall(hall);
         return;
       }

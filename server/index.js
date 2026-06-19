@@ -100,7 +100,18 @@ async function scrapeAnaSlo(slug, existingDates = new Set()) {
     await waitForCF(page);
     console.log("[scrape] Index loaded. Title:", await page.title());
 
-    // ── Step 2: 日付リンク収集 ──
+    // ── Step 2: ページ正常ロード確認 ──
+    const pageTitle = await page.title();
+    const pageHtmlLen = (await page.content()).length;
+    console.log(`[scrape] title="${pageTitle}" html=${pageHtmlLen}bytes`);
+
+    // CF ブロック判定: タイトルが空 or HTML が 1KB 未満 → ブロックされている
+    if (!pageTitle || pageHtmlLen < 1000) {
+      console.warn("[scrape] CF block detected (empty page). Returning cf_blocked.");
+      return { newRecords: [], stoppedEarly: false, reason: "cf_blocked" };
+    }
+
+    // ── Step 2b: 日付リンク収集 ──
     const dayLinks = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll(".date-table .table-row"));
       return rows
@@ -117,7 +128,7 @@ async function scrapeAnaSlo(slug, existingDates = new Set()) {
         .filter((d) => d && d.hasData);
     });
 
-    // ── Step 2b: 取得済み日付をスキップ ──
+    // ── Step 2c: 取得済み日付をスキップ ──
     const newDayLinks = dayLinks.filter((d) => {
       const m = d.href.match(/(\d{4}-\d{2}-\d{2})/);
       return m && !existingDates.has(m[1]);
@@ -126,6 +137,11 @@ async function scrapeAnaSlo(slug, existingDates = new Set()) {
     console.log(
       `[scrape] Days with data: ${dayLinks.length} | already fetched: ${existingDates.size} | new: ${newDayLinks.length}`
     );
+
+    if (dayLinks.length === 0) {
+      console.warn("[scrape] No day links found on listing page (selector mismatch?).");
+      return { newRecords: [], stoppedEarly: false, reason: "no_data_on_listing" };
+    }
 
     if (newDayLinks.length === 0) {
       console.log("[scrape] No new days to scrape.");
